@@ -1,0 +1,71 @@
+name: Release
+
+# Push a tag such as v1.0.0 to build, sign and publish a release.
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+env:
+  APP_ID: kuhlemonitor
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check tag matches info.xml version
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          XML_VERSION=$(sed -n 's:.*<version>\(.*\)</version>.*:\1:p' appinfo/info.xml | head -1)
+          if [ "$VERSION" != "$XML_VERSION" ]; then
+            echo "Tag $VERSION does not match appinfo/info.xml version $XML_VERSION"; exit 1
+          fi
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: Build front end
+        run: |
+          npm ci
+          npm run build
+
+      - name: Package release
+        run: |
+          mkdir -p /tmp/pkg/${APP_ID}
+          cp -r appinfo lib templates img js css LICENSE README.md CHANGELOG.md /tmp/pkg/${APP_ID}/
+          for d in l10n; do [ -d "$d" ] && cp -r "$d" /tmp/pkg/${APP_ID}/ || true; done
+          tar -C /tmp/pkg -czf "${APP_ID}-${VERSION}.tar.gz" ${APP_ID}
+
+      - name: Sign release
+        env:
+          APP_PRIVATE_KEY: ${{ secrets.APP_PRIVATE_KEY }}
+        run: |
+          printf '%s\n' "$APP_PRIVATE_KEY" > /tmp/app.key
+          openssl dgst -sha512 -sign /tmp/app.key "${APP_ID}-${VERSION}.tar.gz" | openssl base64 -A > signature.txt
+          rm -f /tmp/app.key
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" "${APP_ID}-${VERSION}.tar.gz" signature.txt \
+            --title "$GITHUB_REF_NAME" --generate-notes
+
+      - name: Publish to Nextcloud App Store
+        if: ${{ vars.PUBLISH_TO_APPSTORE == 'true' }}
+        env:
+          APPSTORE_TOKEN: ${{ secrets.APPSTORE_TOKEN }}
+        run: |
+          URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}/${APP_ID}-${VERSION}.tar.gz"
+          curl -sS --fail-with-body -X POST https://apps.nextcloud.com/api/v1/apps/releases \
+            -H "Authorization: Token ${APPSTORE_TOKEN}" \
+            -H "Content-Type: application/json" \
+            -d "{\"download\":\"${URL}\",\"signature\":\"$(cat signature.txt)\",\"nightly\":false}"
