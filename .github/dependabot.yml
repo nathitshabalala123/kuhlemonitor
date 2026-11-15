@@ -1,20 +1,13 @@
 version: 2
 updates:
-  - package-ecosystem: composer
-    directories:
-      - "/"
-      - "/vendor-bin/*"
-    schedule:
-      interval: weekly
-      day: saturday
-      time: "03:00"
-      timezone: Europe/Paris
-    open-pull-requests-limit: 10
+  # npm only: the composer setup depends on Nextcloud-internal packages and
+  # failed on every run. Monthly, minor/patch only, to keep PR noise down.
   - package-ecosystem: npm
     directory: "/"
     schedule:
-      interval: weekly
-      day: saturday
-      time: "03:00"
-      timezone: Europe/Paris
-    open-pull-requests-limit: 10
+      interval: monthly
+      timezone: Africa/Johannesburg
+    open-pull-requests-limit: 3
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
